@@ -1,0 +1,81 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Helper functions ─────────────────────────────────────────────────────
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && request.auth.token.admin == true;
+    }
+
+    // ── Users ────────────────────────────────────────────────────────────────
+    // - Any authenticated user can read their own document
+    // - Users can only update their own document (not create/delete freely)
+    // - Admin can read/write all user documents
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isOwner(userId);
+      allow update: if isOwner(userId) || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // ── Products ─────────────────────────────────────────────────────────────
+    // - All users (including anonymous) can read visible products
+    // - Authenticated users can create products
+    // - Only admin can update isVisible or delete products
+    // - The submitting user can update non-moderation fields of their own product
+
+    match /products/{productId} {
+      allow read: if resource.data.isVisible == true || isAdmin();
+      allow create: if isSignedIn()
+        && request.resource.data.submittedBy == request.auth.uid
+        && request.resource.data.isVisible == true;
+      allow update: if isAdmin()
+        || (isSignedIn()
+            && resource.data.submittedBy == request.auth.uid
+            && request.resource.data.isVisible == resource.data.isVisible
+            && request.resource.data.submittedBy == resource.data.submittedBy);
+      allow delete: if isAdmin();
+    }
+
+    // ── Ratings ──────────────────────────────────────────────────────────────
+    // - All users can read ratings
+    // - Authenticated users can create ratings for themselves
+    // - Users can only update/delete their own ratings
+
+    match /ratings/{ratingId} {
+      allow read: if true;
+      allow create: if isSignedIn()
+        && request.resource.data.userId == request.auth.uid;
+      allow update: if isSignedIn()
+        && resource.data.userId == request.auth.uid
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.productId == resource.data.productId;
+      allow delete: if isSignedIn()
+        && resource.data.userId == request.auth.uid;
+    }
+
+    // ── Categories ───────────────────────────────────────────────────────────
+    // - All users can read approved categories
+    // - Authenticated users can create pending category suggestions
+    // - Only admin can approve/reject/delete categories
+
+    match /categories/{categoryId} {
+      allow read: if resource.data.status == 'approved' || isAdmin();
+      allow create: if isSignedIn()
+        && request.resource.data.status == 'pending'
+        && request.resource.data.suggestedBy == request.auth.uid;
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+  }
+}
