@@ -17,7 +17,12 @@ import 'features/ratings/presentation/rate_product_screen.dart';
 import 'features/profile/presentation/profile_screen.dart';
 import 'features/categories/presentation/suggest_category_screen.dart';
 
+// ── Navigator keys ──────────────────────────────────────────────────────────
+
 final _rootNavigatorKey = GlobalKey<NavigatorState>();
+final _shellNavigatorKey = GlobalKey<NavigatorState>();
+
+// ── Router ───────────────────────────────────────────────────────────────────
 
 final routerProvider = Provider<GoRouter>((ref) {
   final authState = ref.watch(authStateProvider);
@@ -27,26 +32,30 @@ final routerProvider = Provider<GoRouter>((ref) {
     initialLocation: AppConstants.routeSplash,
     redirect: (context, state) {
       final isLoggedIn = authState.valueOrNull != null;
-      final isSplash = state.matchedLocation == AppConstants.routeSplash;
-      final isOnboarding = state.matchedLocation == AppConstants.routeOnboarding;
-      final isAuth = state.matchedLocation == AppConstants.routeLogin ||
-          state.matchedLocation == AppConstants.routeRegister;
+      final loc = state.matchedLocation;
 
-      // Let splash always render first
-      if (isSplash || isOnboarding) return null;
+      final isPublic = loc == AppConstants.routeSplash ||
+          loc == AppConstants.routeOnboarding ||
+          loc == AppConstants.routeLogin ||
+          loc == AppConstants.routeRegister;
 
-      // If loading auth state, stay
+      if (isPublic) return null;
       if (authState.isLoading) return null;
 
-      // If not logged in and not on auth screen, redirect to login
-      if (!isLoggedIn && !isAuth) return AppConstants.routeLogin;
+      // Guests may browse dashboard and products (read-only)
+      final isGuestAllowed = loc == AppConstants.routeDashboard ||
+          loc.startsWith(AppConstants.routeProducts);
 
-      // If logged in and on auth screen, redirect to dashboard
-      if (isLoggedIn && isAuth) return AppConstants.routeDashboard;
-
+      if (!isLoggedIn && !isGuestAllowed) return AppConstants.routeLogin;
+      if (isLoggedIn &&
+          (loc == AppConstants.routeLogin ||
+              loc == AppConstants.routeRegister)) {
+        return AppConstants.routeDashboard;
+      }
       return null;
     },
     routes: [
+      // ── Standalone screens (no bottom nav) ──────────────────────────────
       GoRoute(
         path: AppConstants.routeSplash,
         name: AppConstants.splashRoute,
@@ -67,45 +76,52 @@ final routerProvider = Provider<GoRouter>((ref) {
         name: AppConstants.registerRoute,
         builder: (context, state) => const RegisterScreen(),
       ),
-      GoRoute(
-        path: AppConstants.routeDashboard,
-        name: AppConstants.dashboardRoute,
-        builder: (context, state) => const DashboardScreen(),
-      ),
-      GoRoute(
-        path: AppConstants.routeProducts,
-        name: AppConstants.productsRoute,
-        builder: (context, state) => const ProductListScreen(),
+
+      // ── Main shell with bottom nav ───────────────────────────────────────
+      ShellRoute(
+        navigatorKey: _shellNavigatorKey,
+        builder: (context, state, child) =>
+            MainShell(location: state.matchedLocation, child: child),
         routes: [
           GoRoute(
-            path: ':productId',
-            name: AppConstants.productDetailRoute,
-            builder: (context, state) {
-              final productId = state.pathParameters['productId']!;
-              return ProductDetailScreen(productId: productId);
-            },
-            routes: [
-              GoRoute(
-                path: 'rate',
-                name: AppConstants.rateProductRoute,
-                builder: (context, state) {
-                  final productId = state.pathParameters['productId']!;
-                  return RateProductScreen(productId: productId);
-                },
-              ),
-            ],
+            path: AppConstants.routeDashboard,
+            name: AppConstants.dashboardRoute,
+            builder: (context, state) => const DashboardScreen(),
+          ),
+          GoRoute(
+            path: AppConstants.routeProducts,
+            name: AppConstants.productsRoute,
+            builder: (context, state) => const ProductListScreen(),
+          ),
+          GoRoute(
+            path: AppConstants.routeProfile,
+            name: AppConstants.profileRoute,
+            builder: (context, state) => const ProfileScreen(),
           ),
         ],
+      ),
+
+      // ── Full-screen routes (push over shell) ────────────────────────────
+      GoRoute(
+        path: '/products/:productId',
+        name: AppConstants.productDetailRoute,
+        builder: (context, state) {
+          final productId = state.pathParameters['productId']!;
+          return ProductDetailScreen(productId: productId);
+        },
+      ),
+      GoRoute(
+        path: '/products/:productId/rate',
+        name: AppConstants.rateProductRoute,
+        builder: (context, state) {
+          final productId = state.pathParameters['productId']!;
+          return RateProductScreen(productId: productId);
+        },
       ),
       GoRoute(
         path: AppConstants.routeAddProduct,
         name: AppConstants.addProductRoute,
         builder: (context, state) => const AddProductScreen(),
-      ),
-      GoRoute(
-        path: AppConstants.routeProfile,
-        name: AppConstants.profileRoute,
-        builder: (context, state) => const ProfileScreen(),
       ),
       GoRoute(
         path: AppConstants.routeSuggestCategory,
@@ -115,6 +131,64 @@ final routerProvider = Provider<GoRouter>((ref) {
     ],
   );
 });
+
+// ── Main shell widget ─────────────────────────────────────────────────────────
+
+class MainShell extends StatelessWidget {
+  final String location;
+  final Widget child;
+
+  const MainShell({super.key, required this.location, required this.child});
+
+  int _selectedIndex(String loc) {
+    if (loc.startsWith(AppConstants.routeProducts)) return 1;
+    if (loc.startsWith(AppConstants.routeProfile)) return 2;
+    return 0; // dashboard
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final idx = _selectedIndex(location);
+    return Scaffold(
+      body: child,
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: idx,
+        onDestinationSelected: (i) {
+          switch (i) {
+            case 0:
+              context.go(AppConstants.routeDashboard);
+              break;
+            case 1:
+              context.go(AppConstants.routeProducts);
+              break;
+            case 2:
+              context.go(AppConstants.routeProfile);
+              break;
+          }
+        },
+        destinations: const [
+          NavigationDestination(
+            icon: Icon(Icons.dashboard_outlined),
+            selectedIcon: Icon(Icons.dashboard),
+            label: 'Top Rated',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.search_outlined),
+            selectedIcon: Icon(Icons.search),
+            label: 'Browse',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.person_outline),
+            selectedIcon: Icon(Icons.person),
+            label: 'Profile',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── App ───────────────────────────────────────────────────────────────────────
 
 class ShelfRateApp extends ConsumerWidget {
   const ShelfRateApp({super.key});
